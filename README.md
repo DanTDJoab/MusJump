@@ -8,7 +8,6 @@ Cada canción completa aumenta la dificultad. ¡Demuestra tus reflejos y ritmo!
 
 ## 🚀 Jugar en línea
 👉 [Jugar Beat Jump en GitHub Pages](https://DanTDJoab.github.io/MusJump/)  
-*(Agrega el enlace real de tu página una vez publicada)*
 
 ---
 
