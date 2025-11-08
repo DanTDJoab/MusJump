@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MusBeat Battle — Full Build</title>
+<style>
+  :root{--accent:#00ffe6}
+  html,body{height:100%;margin:0;background:#000;color:#fff;font-family:Poppins,Arial,Helvetica,sans-serif}
+  #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(0,0,0,0.6),rgba(0,0,0,0.85));z-index:40}
+  .buttons{display:flex;gap:12px;margin-top:8px}
+  .btn{padding:10px 18px;border-radius:10px;border:0;background:linear-gradient(135deg,#00ffff,#0066ff);color:#002;font-weight:700;cursor:pointer}
+  #overlayEnd{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:50}
+  .panel{background:rgba(0,0,0,0.92);padding:22px;border-radius:12px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  canvas{display:block;margin:18px auto;border:3px solid rgba(0,255,255,0.12);border-radius:8px;background:#000}
+  #hud{position:fixed;left:12px;top:12px;z-index:60;font-weight:600;display:flex;flex-direction:column;gap:6px}
+  .small{font-size:13px;color:#cfcfcf}
+  #hudRow{display:flex;gap:12px;align-items:center}
+  #volumeSlider{width:120px}
+  #topRight{position:fixed;right:12px;top:12px;z-index:60;text-align:right}
+  .pill{background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:10px}
+  .hpBar{display:flex;gap:6px;align-items:center}
+  .hpDot{width:12px;height:12px;border-radius:3px;background:#ff6b6b;opacity:0.9}
+  #note{font-size:12px;color:#9fb}
+  footer{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);font-size:12px;opacity:0.6}
+</style>
+</head>
+<body>
+  <div id="menu">
+    <h1>🎵 MusBeat Battle — Full</h1>
+    <p class="small">Mover: ← → • Saltar: ESPACIO (doble salto) • Atacar: A • Defender: S</p>
+    <div class="buttons">
+      <button id="startBtn" class="btn">▶️ Demo (musica)</button>
+      <button id="uploadBtn" class="btn">📂 Subir música</button>
+      <input id="fileInput" type="file" accept="audio/*" style="display:none">
+    </div>
+    <p id="note" class="small" style="margin-top:10px">Usa ↑ ↓ para subir / bajar volumen. Presiona R en Game Over para reiniciar rápido.</p>
+  </div>
+
+  <div id="overlayEnd">
+    <div class="panel">
+      <h2>🎵 Canción terminada</h2>
+      <p class="small">Repetir sube dificultad. O elige otra canción.</p>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:center">
+        <button id="repeatBtn" class="btn">🔁 Repetir</button>
+        <button id="selectBtn" class="btn">📂 Nueva</button>
+        <button id="continueBtn" class="btn">▶️ Continuar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hud" aria-hidden="false">
+    <div id="hudRow">
+      <div class="pill" id="score">Score: 0</div>
+      <div class="pill hpBar" id="hpContainer">Vidas: <div id="hpDots" style="display:inline-flex;margin-left:8px"></div></div>
+      <div class="pill" id="diff">Dificultad: 1.00</div>
+    </div>
+    <div id="hudRow">
+      <div class="pill">Vol: <span id="volLabel">100%</span></div>
+      <input id="volumeSlider" type="range" min="0" max="100" value="100">
+    </div>
+  </div>
+
+  <div id="topRight">
+    <div class="pill small">Presiona R para reiniciar rápido en GAME OVER</div>
+  </div>
+
+  <canvas id="gameCanvas" width="960" height="540" style="display:none" tabindex="0"></canvas>
+
+  <footer>MusBeat Battle — Integrado • Usa assets/ (imágenes) y musica/demo1.mp3</footer>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+
+  <script>
+  (function(){
+    const { Engine, Runner, Bodies, Body, World, Events } = Matter;
+
+    const menu = document.getElementById('menu');
+    const startBtn = document.getElementById('startBtn');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const fileInput = document.getElementById('fileInput');
+    const overlayEnd = document.getElementById('overlayEnd');
+    const repeatBtn = document.getElementById('repeatBtn');
+    const selectBtn = document.getElementById('selectBtn');
+    const continueBtn = document.getElementById('continueBtn');
+    const hudScore = document.getElementById('score');
+    const hudDiff = document.getElementById('diff');
+    const hudHP = document.getElementById('hpDots');
+    const volLabel = document.getElementById('volLabel');
+    const volSlider = document.getElementById('volumeSlider');
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    canvas.width = 960; canvas.height = 540;
+    const CANVAS_W = canvas.width, CANVAS_H = canvas.height;
+
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 1.25;
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+
+    const PLAYER_W = 48, PLAYER_H = 60;
+    const GROUND_PADDING = 60;
+
+    let estado = 'menu'; // menu | juego | cancionTerminada | continuarSinMusica | gameover
+    let plataformas = [], enemigos = [], particulas = [], explosiones = [];
+    let spawnX = 800, camX = 0, score = 0, difficulty = 1.0;
+    let audio = null, audioCtx = null;
+    let hp = 3;
+    let enemySpawnTimer = null;
+    let waitingToShowOverlay = false;
+
+    const input = { left:false, right:false, jump:false, attack:false, defend:false };
+    let canJump = true, jumpCount = 0, maxJumps = 2;
+
+    const imgBg = new Image(); imgBg.src = "assets/fondo.png";
+    const imgPlayer = new Image(); imgPlayer.src = "assets/Catjump.gif";
+    const imgAttack = new Image(); imgAttack.src = "assets/player_attack.gif";
+    const imgDefend = new Image(); imgDefend.src = "assets/player_defend.gif";
+    const platImgs = ["assets/plataforma_g.png","assets/plataforma_g2.png","assets/plataforma_m.png","assets/plataforma_m2.png","assets/plataforma_l.png"].map(s=>{const i=new Image(); i.src=s; return i;});
+    const imgEnemyA = new Image(); imgEnemyA.src = "assets/Enemy.gif";
+    const imgEnemyB = new Image(); imgEnemyB.src = "assets/Enemy2.gif";
+
+    let player = null;
+
+    const rand = (a,b) => a + Math.random()*(b-a);
+    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+    function crearPlayer(x,y){
+      if (player){
+        try{ World.remove(world, player); }catch(e){}
+        player = null;
+      }
+      player = Bodies.rectangle(x, y, PLAYER_W, PLAYER_H, {
+        label: 'player',
+        friction: 0.02,
+        frictionAir: 0.02,
+        restitution: 0,
+        chamfer: { radius: 2 }
+      });
+      player.groundContacts = 0;
+      player.invuln = 0;
+      World.add(world, player);
+      Body.setVelocity(player, { x:0, y:0 });
+      onGround = false;
+      canJump = true;
+      jumpCount = 0;
+      return player;
+    }
+
+    function crearPlataforma(x, y, w, h, imgIndex){
+      let tries = 0;
+      while (tries < 40){
+        const overlapping = plataformas.some(p =>
+          Math.abs(p.position.x - x) < (p.w/2 + w/2 + 24) &&
+          Math.abs(p.position.y - y) < (p.h/2 + h/2 + 18)
+        );
+        if (!overlapping) break;
+        x += Math.floor(rand(120,260));
+        y = Math.floor(rand(320,430));
+        tries++;
+      }
+      const p = Bodies.rectangle(x, y, w, h, { isStatic: true, label: 'platform' });
+      p.w = w; p.h = h;
+      p.img = (typeof imgIndex === 'number') ? platImgs[imgIndex % platImgs.length] : platImgs[Math.floor(Math.random()*platImgs.length)];
+      plataformas.push(p);
+      World.add(world, p);
+      return p;
+    }
+
+    function crearEnemigoSobrePlataforma(p){
+      const ex = p.position.x + rand(-p.w/2 + 20, p.w/2 - 20);
+      const ey = p.position.y - p.h/2 - 24;
+      const e = Bodies.rectangle(ex, ey, 44, 46, { label: 'enemy', friction: 0, restitution: 0 });
+      e.patrolDir = Math.random() < 0.5 ? -1 : 1;
+      e.speedBase = 0.45 + Math.random()*0.6;
+      e.platformRef = p;
+      e.alpha = 1;
+      e.dying = false;
+      e.spawnTime = performance.now();
+      e.img = Math.random() < 0.5 ? imgEnemyA : imgEnemyB;
+      enemigos.push(e);
+      World.add(world, e);
+      return e;
+    }
+
+    function spawnParticle(x,y,vx,vy,life,color='#ffcc00'){
+      particulas.push({ x, y, vx, vy, life, color });
+    }
+    function spawnExplosion(x,y,n=20){
+      for (let i=0;i<n;i++){
+        const ang = Math.random()*Math.PI*2;
+        const speed = 1 + Math.random()*4;
+        spawnParticle(x, y, Math.cos(ang)*speed, Math.sin(ang)*speed - 1, 30 + Math.random()*30, '#ffb84d');
+      }
+      explosiones.push({ x, y, r:8, alpha:1 });
+    }
+    function updateParticles(){
+      for (const p of particulas){
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.12;
+        p.life--;
+      }
+      particulas = particulas.filter(p => p.life > 0);
+      for (const ex of explosiones){
+        ex.r += 2;
+        ex.alpha -= 0.05;
+      }
+      explosiones = explosiones.filter(e => e.alpha > 0);
+    }
+
+    Events.on(engine, 'collisionStart', event=>{
+      for (const pair of event.pairs){
+        const a = pair.bodyA, b = pair.bodyB;
+        if (!player) continue;
+        if ((a.label === 'player' && b.label === 'platform') || (b.label === 'player' && a.label === 'platform')){
+          player.groundContacts = (player.groundContacts || 0) + 1;
+          onGround = true;
+          canJump = true;
+          jumpCount = 0;
+          if (waitingToShowOverlay){ waitingToShowOverlay = false; showOverlayEnd(); }
+        }
+
+        if ((a.label === 'player' && b.label === 'enemy') || (b.label === 'player' && a.label === 'enemy')){
+          const enemy = (a.label === 'enemy') ? a : b;
+          if (player.velocity.y > 1 && (player.position.y + 10) < enemy.position.y){
+            spawnExplosion(enemy.position.x, enemy.position.y);
+            try{ World.remove(world, enemy); }catch(e){}
+            enemigos = enemigos.filter(en => en !== enemy);
+            Body.setVelocity(player, { x: player.velocity.x, y: -10 });
+            score += Math.round(150 * difficulty);
+            updateHUD();
+            continue;
+          }
+          if (input.attack){
+            spawnExplosion(enemy.position.x, enemy.position.y);
+            try{ World.remove(world, enemy); }catch(e){}
+            enemigos = enemigos.filter(en => en !== enemy);
+            score += Math.round(120 * difficulty);
+            updateHUD();
+            continue;
+          }
+
+          if (!input.defend){
+            if (!player.invuln || performance.now() - player.invuln > 600){
+              hp -= 1;
+              player.invuln = performance.now();
+              if (hp <= 0){
+                estado = 'gameover';
+              } else {
+                const dir = (enemy.position.x > player.position.x) ? -1 : 1;
+                Body.setVelocity(player, { x: dir * 4, y: -5 });
+                for (let i=0;i<8;i++) spawnParticle(player.position.x, player.position.y, (Math.random()-0.5)*3, -Math.random()*3, 18, '#ff6b6b');
+              }
+              updateHUD();
+            }
+          } else {
+            Body.setVelocity(enemy, { x: (enemy.position.x > player.position.x) ? 3 : -3, y: -1 });
+          }
+        }
+      }
+    });
+
+    Events.on(engine, 'collisionEnd', event=>{
+      for (const pair of event.pairs){
+        if (!player) continue;
+        if ((pair.bodyA.label === 'player' && pair.bodyB.label === 'platform') || (pair.bodyB.label === 'player' && pair.bodyA.label === 'platform')){
+          player.groundContacts = Math.max(0, (player.groundContacts || 1) - 1);
+          if (player.groundContacts === 0) onGround = false;
+        }
+      }
+    });
+
+    function generarPlataformasIniciales(){
+      plataformas.forEach(p => { try{ World.remove(world, p); }catch(e){} });
+      enemigos.forEach(e => { try{ World.remove(world, e); }catch(e){} });
+      plataformas = []; enemigos = []; particulas = []; explosiones = [];
+      spawnX = 800;
+
+      const base = crearPlataforma(480, 520, 1300, 60, 0);
+
+      let x = 800;
+      for (let i=0;i<12;i++){
+        const w = Math.floor(rand(110,260));
+        const y = Math.floor(rand(340,420));
+        const p = crearPlataforma(x, y, w, 18);
+        if (Math.random() < 0.28){
+          crearEnemigoSobrePlataforma(p);
+        }
+        x += Math.floor(220 + rand(40,260)/Math.max(0.6, difficulty));
+      }
+
+      const playerX = base.position.x - 300;
+      const playerY = base.position.y - base.h/2 - (PLAYER_H/2) - 6;
+      crearPlayer(playerX, playerY);
+      Body.setPosition(player, { x: player.position.x, y: Math.min(player.position.y, base.position.y - base.h/2 - PLAYER_H - 6) });
+      Body.setVelocity(player, { x:0, y:0 });
+
+      onGround = true; canJump = true; jumpCount = 0;
+      updateHUD();
+    }
+
+    function spawnAheadIfNeeded(){
+      while (spawnX < player.position.x + 2200){
+        const w = Math.floor(rand(110,260));
+        const y = Math.floor(rand(340,420));
+        const last = plataformas.length ? plataformas[plataformas.length-1] : null;
+        let x = spawnX;
+        if (last && Math.abs(x - last.position.x) < (last.w/2 + 80)) x = last.position.x + last.w/2 + 120;
+        const p = crearPlataforma(x, y, w, 18);
+        const lastEnemyX = enemigos.length ? enemigos[enemigos.length-1].position.x : -9999;
+        if (Math.random() < 0.24 * difficulty && (x - lastEnemyX) > 220){
+          crearEnemigoSobrePlataforma(p);
+        }
+        spawnX = x + Math.floor(220 + rand(60,300)/Math.max(0.5, difficulty));
+      }
+
+      for (let i = plataformas.length - 1; i >= 0; i--){
+        if (plataformas[i].position.x < player.position.x - 1400){
+          try{ World.remove(world, plataformas[i]); }catch(e){}
+          plataformas.splice(i,1);
+        }
+      }
+      for (let i = enemigos.length - 1; i >= 0; i--){
+        if (enemigos[i].position.x < player.position.x - 1400 || enemigos[i].position.y > CANVAS_H + 300){
+          try{ World.remove(world, enemigos[i]); }catch(e){}
+          enemigos.splice(i,1);
+        }
+      }
+    }
+
+    function actualizarEnemigos(){
+      for (const e of enemigos){
+        if (e.dying) continue;
+        const p = e.platformRef;
+        if (!p){
+          const maybe = plataformas.find(pl => Math.abs(e.position.x - pl.position.x) < pl.w/2 + 10 && Math.abs(e.position.y - (pl.position.y - pl.h/2 - 24)) < 60);
+          if (maybe) e.platformRef = maybe;
+        }
+        const plat = e.platformRef;
+        if (plat){
+          const leftEdge = plat.position.x - plat.w/2 + 12;
+          const rightEdge = plat.position.x + plat.w/2 - 12;
+          if (e.position.x < leftEdge) e.patrolDir = 1;
+          if (e.position.x > rightEdge) e.patrolDir = -1;
+          const speed = (e.speedBase || 0.6) * (1 + (difficulty - 1) * 0.45);
+          Body.setVelocity(e, { x: e.patrolDir * speed, y: e.velocity.y });
+          Body.setPosition(e, { x: e.position.x, y: plat.position.y - plat.h/2 - 23 });
+        } else {
+          Body.setVelocity(e, { x: (e.patrolDir || -1) * 0.4, y: e.velocity.y });
+        }
+      }
+    }
+
+    function killEnemy(e){
+      if (!e || e.dying) return;
+      e.dying = true;
+      const start = performance.now();
+      const dur = 280;
+      (function fade(){
+        const t = (performance.now() - start)/dur;
+        e.alpha = Math.max(0, 1 - t);
+        if (t < 1) requestAnimationFrame(fade);
+        else {
+          try{ World.remove(world, e); }catch(err){}
+          enemigos = enemigos.filter(x => x !== e);
+          spawnExplosion(e.position.x, e.position.y);
+          score += Math.round(120 * difficulty);
+          updateHUD();
+        }
+      })();
+    }
+
+    function updateHUD(){
+      hudScore.textContent = 'Score: ' + score;
+      hudDiff.textContent = 'Dificultad: ' + difficulty.toFixed(2);
+      hudHP.innerHTML = '';
+      for (let i=0;i<3;i++){
+        const dot = document.createElement('div');
+        dot.className = 'hpDot';
+        dot.style.opacity = (i < hp) ? '1' : '0.12';
+        hudHP.appendChild(dot);
+      }
+      volLabel.textContent = audio ? Math.round((audio.volume||1)*100) + '%' : '0%';
+    }
+
+    function scheduleNextEnemy(){
+      if (enemySpawnTimer) clearTimeout(enemySpawnTimer);
+      const baseMin = 4500, baseMax = 9000;
+      const factor = clamp(1 - (difficulty-1) * 0.12, 0.4, 1);
+      const delay = rand(baseMin*factor, baseMax*factor);
+      enemySpawnTimer = setTimeout(()=>{
+        const candidates = plataformas.filter(p => p.position.x > player.position.x + 200 && p.position.x < player.position.x + 1400);
+        const p = (candidates.length) ? candidates[Math.floor(Math.random()*candidates.length)] : (plataformas.length ? plataformas[Math.floor(Math.random()*plataformas.length)] : null);
+        if (p) crearEnemigoSobrePlataforma(p);
+        scheduleNextEnemy();
+      }, delay);
+    }
+
+    function gameLoop(){
+      Engine.update(engine, 1000/60);
+
+      if (estado === 'juego' || estado === 'continuarSinMusica'){
+        const baseForce = 0.0026 * (1 + (difficulty - 1) * 0.25);
+        if (input.right) Body.applyForce(player, player.position, { x: baseForce, y: 0 });
+        if (input.left) Body.applyForce(player, player.position, { x: -baseForce, y: 0 });
+
+        if (input.jump){
+          if ((onGround || jumpCount < maxJumps) && canJump){
+            let extra = 0;
+            if (!onGround) extra = -2; 
+            Body.setVelocity(player, { x: player.velocity.x, y: -13 + extra });
+            jumpCount++;
+            canJump = false; 
+            onGround = false;
+          }
+        } else {
+
+          canJump = true;
+        }
+
+        if (input.attack){
+          input.attack = false;
+          const px = player.position.x;
+          for (const e of enemigos.slice()){
+            if (e.dying) continue;
+            const dx = Math.abs(e.position.x - px);
+            const dy = Math.abs(e.position.y - player.position.y);
+            if (dx < 90 && dy < 70) killEnemy(e);
+          }
+        }
+
+        actualizarEnemigos();
+        spawnAheadIfNeeded();
+
+        updateParticles();
+
+        if (!gameLoop._tick) gameLoop._tick = performance.now();
+        if (performance.now() - gameLoop._tick > 1000){
+          score += Math.round(5 * difficulty);
+          updateHUD();
+          gameLoop._tick = performance.now();
+        }
+
+        if (player.position.y > CANVAS_H + 160){
+          estado = 'gameover';
+        }
+      }
+
+      camX = player ? player.position.x - 220 : 0;
+      renderFrame();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function renderFrame(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      if (imgBg.complete){
+        const bgW = canvas.width * 1.5;
+        const bgX = - (camX * 0.25 % bgW);
+        ctx.drawImage(imgBg, bgX - bgW, 0, bgW, canvas.height);
+        ctx.drawImage(imgBg, bgX, 0, bgW, canvas.height);
+        ctx.drawImage(imgBg, bgX + bgW, 0, bgW, canvas.height);
+      } else {
+        ctx.fillStyle = '#081018';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+      }
+
+      for (const p of plataformas){
+        const x = p.position.x - p.w/2 - camX;
+        const y = p.position.y - p.h/2;
+        if (p.img && p.img.complete) ctx.drawImage(p.img, x, y, p.w, p.h);
+        else { ctx.fillStyle = '#6a4c93'; ctx.fillRect(x,y,p.w,p.h); }
+      }
+
+      for (const e of enemigos){
+        const x = e.position.x - camX - 25;
+        const y = e.position.y - 25;
+        ctx.save();
+        ctx.globalAlpha = (typeof e.alpha === 'number') ? e.alpha : 1;
+        const im = (e.img && e.img.complete) ? e.img : imgEnemyA;
+        ctx.drawImage(im, x, y, 50, 50);
+        ctx.restore();
+      }
+
+      for (const p of particulas){
+        ctx.globalAlpha = clamp(p.life/45, 0, 1);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x - camX, p.y, 3, 3);
+        ctx.globalAlpha = 1;
+      }
+
+      for (const ex of explosiones){
+        ctx.save();
+        ctx.globalAlpha = clamp(ex.alpha, 0, 1);
+        ctx.fillStyle = 'orange';
+        ctx.beginPath();
+        ctx.arc(ex.x - camX, ex.y, ex.r, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (player){
+        const px = player.position.x - camX - 32;
+        const py = player.position.y - 45;
+        let sprite = imgPlayer;
+        if (input.attack) sprite = imgAttack;
+        else if (input.defend) sprite = imgDefend;
+        if (sprite.complete){
+          if (player.invuln && performance.now() - player.invuln < 600){
+            if (Math.floor(performance.now()/60) % 2 === 0) ctx.globalAlpha = 0.4;
+          }
+          ctx.drawImage(sprite, px, py, 64, 64);
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      if (audio && audio.duration > 0){
+        const prog = (audio.currentTime / audio.duration) * canvas.width;
+        ctx.fillStyle = 'rgba(0,255,230,0.18)';
+        ctx.fillRect(0, canvas.height - 8, prog, 6);
+      }
+
+      if (estado === 'gameover'){
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = '#fff'; ctx.font = '28px Poppins'; ctx.fillText('💀 GAME OVER 💀', 300, 230);
+        ctx.font = '18px Poppins'; ctx.fillText('Presiona R para reiniciar rápido', 300, 270);
+      }
+    }
+
+    function setupAudio(el){
+      try{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = audioCtx.createMediaElementSource(el);
+        const gain = audioCtx.createGain();
+        src.connect(gain);
+        gain.connect(audioCtx.destination);
+        el._gain = gain;
+      }catch(e){ console.warn('AudioContext no disponible', e); }
+    }
+
+    async function startAudio(url){
+      if (audio){ try{ audio.pause(); }catch(e){} audio = null; }
+      audio = new Audio(url);
+      audio.crossOrigin = 'anonymous';
+      audio.loop = false;
+      audio.volume = volSlider.value / 100;
+      if (!audioCtx) setupAudio(audio);
+      try{ if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume(); }catch(e){}
+      try{ await audio.play(); }catch(e){ console.warn('play requiere interacción'); }
+      audio.onended = onSongEnd;
+      generarPlataformasIniciales();
+      scheduleNextEnemy();
+      estado = 'juego';
+      menu.style.display = 'none';
+      canvas.style.display = 'block';
+      updateHUD();
+    }
+
+    function onSongEnd(){
+      if (!onGround){
+        waitingToShowOverlay = true;
+      } else {
+        showOverlayEnd();
+      }
+    }
+    function showOverlayEnd(){
+      estado = 'cancionTerminada';
+      overlayEnd.style.display = 'flex';
+    }
+
+    startBtn.addEventListener('click', ()=>{ startDemo(); });
+    uploadBtn.addEventListener('click', ()=> fileInput.click());
+    fileInput.addEventListener('change', e=>{
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      startAudio(URL.createObjectURL(f));
+    });
+    repeatBtn.addEventListener('click', ()=>{
+      if (!audio) return;
+      overlayEnd.style.display = 'none';
+      difficulty = Math.min(3.0, difficulty + 0.25);
+      audio.currentTime = 0; audio.play().catch(()=>{});
+      estado = 'juego';
+      scheduleNextEnemy();
+    });
+    selectBtn.addEventListener('click', ()=>{
+      overlayEnd.style.display = 'none';
+      difficulty = Math.min(3.0, difficulty + 0.25);
+      const tmp = document.createElement('input'); tmp.type='file'; tmp.accept='audio/*';
+      tmp.onchange = e=>{ const f=e.target.files[0]; if (f) startAudio(URL.createObjectURL(f)); }; tmp.click();
+    });
+    continueBtn.addEventListener('click', ()=>{
+      overlayEnd.style.display = 'none';
+      estado = 'continuarSinMusica';
+      try{ audio && audio.pause(); }catch(e){} audio = null;
+    });
+
+    function startDemo(){
+      menu.style.display = 'none';
+      canvas.style.display = 'block';
+      startAudio('musica/demo1.mp3');
+    }
+
+    volSlider.addEventListener('input', ()=>{
+      const v = volSlider.value / 100;
+      if (audio){
+        try{
+          audio.volume = v;
+          if (audio._gain) audio._gain.gain.value = v;
+        }catch(e){}
+      }
+      volLabel.textContent = Math.round(v*100) + '%';
+    });
+
+    // --- teclado: listeners robustos en window + prevención selectiva de default ---
+window.addEventListener('keydown', (e) => {
+  // prevenir scroll/acciones no deseadas solo para teclas usadas por el juego
+  if (['ArrowLeft','ArrowRight','Space','ArrowUp','ArrowDown'].includes(e.code)) {
+    e.preventDefault();
+  }
+
+  if (estado === 'menu' && e.code === 'Enter') startDemo();
+
+  if (e.code === 'ArrowLeft') input.left = true;
+  if (e.code === 'ArrowRight') input.right = true;
+  if (e.code === 'Space') {
+    input.jump = true;
+    // no hacer canJump logic aquí — la manejamos en el gameLoop para doble salto
+  }
+  if (e.code === 'KeyA') input.attack = true;
+  if (e.code === 'KeyS') input.defend = true;
+
+  if (estado === 'gameover' && e.code === 'KeyR') quickRestart();
+
+  // volumen con flechas (opcional)
+  if (e.code === 'ArrowUp') {
+    volSlider.value = Math.min(100, Number(volSlider.value) + 5);
+    volSlider.dispatchEvent(new Event('input'));
+  } else if (e.code === 'ArrowDown') {
+    volSlider.value = Math.max(0, Number(volSlider.value) - 5);
+    volSlider.dispatchEvent(new Event('input'));
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft') input.left = false;
+  if (e.code === 'ArrowRight') input.right = false;
+  if (e.code === 'Space') {
+    // cuando sueltas espacio permites el siguiente pulso de salto
+    input.jump = false;
+    canJump = true;
+  }
+  if (e.code === 'KeyA') input.attack = false;
+  if (e.code === 'KeyS') input.defend = false;
+});
+
+
+
+    function quickRestart(){
+      if (enemySpawnTimer) clearTimeout(enemySpawnTimer);
+      plataformas.forEach(p=>{ try{ World.remove(world,p);}catch(e){} });
+      enemigos.forEach(e=>{ try{ World.remove(world,e);}catch(e){} });
+      plataformas = []; enemigos = []; explosiones = []; particulas = [];
+      spawnX = 800;
+      generarPlataformasIniciales();
+      score = 0; hp = 3;
+      updateHUD();
+      estado = 'juego';
+      scheduleNextEnemy();
+      menu.style.display = 'none'; canvas.style.display = 'block';
+    }
+
+    function reiniciarJuego(){
+      estado = 'menu';
+      menu.style.display = 'flex';
+      overlayEnd.style.display = 'none';
+      canvas.style.display = 'none';
+      try{ audio && audio.pause(); }catch(e){} audio = null;
+      if (enemySpawnTimer) clearTimeout(enemySpawnTimer);
+      plataformas.forEach(p=>{ try{ World.remove(world,p);}catch(e){} });
+      enemigos.forEach(e=>{ try{ World.remove(world,e);}catch(e){} });
+      plataformas = []; enemigos = []; explosiones = []; particulas = [];
+      score = 0; hp = 3; difficulty = 1.0;
+      if (player){ try{ World.remove(world, player); }catch(e){} player = null; }
+      updateHUD();
+      menu.style.display = 'flex';
+    }
+    window.reiniciarJuego = reiniciarJuego;
+
+
+    generarPlataformasIniciales();
+    overlayEnd.style.display = 'none';
+    updateHUD();
+    requestAnimationFrame(gameLoop);
+    document.addEventListener('keydown', e=>{
+      if (['ArrowLeft','ArrowRight','Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+    });
+
+    window.startAudio = startAudio;
+    window.gameState = () => ({ estado, score, difficulty, plataformas: plataformas.length, enemigos: enemigos.length });
+
+  })();
+  </script>
+</body>
+</html>
