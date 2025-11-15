@@ -8,7 +8,6 @@ Cada canción completa aumenta la dificultad. ¡Demuestra tus reflejos y ritmo!
 
 ## 🚀 Jugar en línea
 👉 [Jugar Beat Jump en GitHub Pages](https://DanTDJoab.github.io/MusJump/)  
-*(Agrega el enlace real de tu página una vez publicada)*
 
 ---
 
@@ -47,7 +46,22 @@ Cada canción completa aumenta la dificultad. ¡Demuestra tus reflejos y ritmo!
 
 ---
 
+<img width="1332" height="630" alt="image" src="https://github.com/user-attachments/assets/b3c6f9c1-5b9c-43e1-acd2-92e86dbf5e80" />
+
+
 ## ⚙️ Instalación local
 1. Clona este repositorio:
    ```bash
    git clone https://github.com/DanTDJoab/MusJump.git
+
+
+Desarrollado por: Dan Joab Terán Díaz
+
+Concepto y arte pixelado: Dan Joab Terán Díaz
+
+Mecánicas y programación: Dan Joab Terán Díaz
+
+Inspiración: Juegos rítmicos y plataformas arcade minimalistas
+
+Año: 2025
+
